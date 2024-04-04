@@ -47,10 +47,10 @@ def remove_background(input_image_path, output_image_path, is_cli=False):
         print(f"Background removed and saved to '{output_image_path}'")
     except Exception as e:
         print(f"Error: {e}")
-    # finally:
-    #     # Remove the input temporary file if not in CLI mode or in development mode
-    #     if (not is_cli):
-    #         os.remove(input_image_path)
+    finally:
+        # Remove the input temporary file if not in CLI mode or in development mode
+        if (not is_cli):
+            os.remove(input_image_path)
 
 @app.route('/remove_background', methods=['POST'])
 def remove_background_endpoint():
@@ -84,7 +84,7 @@ def get_result(unique_id):
         # Send the output image as a response
         output_image_file = io.BytesIO(output_image_bytes)
     
-        os.remove(output_image_path)
+        # os.remove(output_image_path)
         return send_file(output_image_file, mimetype='image/png')
     else:
         return jsonify({'error': 'Background removal not completed yet'}), 202
