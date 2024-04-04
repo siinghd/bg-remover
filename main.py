@@ -8,11 +8,29 @@ import threading
 import uuid
 import io
 import sys
+import time
+from threading import Thread
+from datetime import datetime, timedelta
+import glob
 
 app = Flask(__name__)
 
 # Get the environment variable for the mode (production or development)
 MODE = os.environ.get('MODE', 'development')
+
+# Function to clean up old files
+def cleanup_old_files():
+    while True:
+        now = datetime.now()
+        for filepath in glob.glob('temp_input_*') + glob.glob('temp_output_*.png'):
+            file_creation_time = datetime.fromtimestamp(os.path.getmtime(filepath))
+            if now - file_creation_time > timedelta(hours=1):
+                try:
+                    os.remove(filepath)
+                    print(f"Deleted {filepath}")
+                except Exception as e:
+                    print(f"Error deleting file {filepath}: {e}")
+        time.sleep(3600)  # Sleep for 1 hour
 
 def remove_background(input_image_path, output_image_path, is_cli=False):
     try:
@@ -29,10 +47,10 @@ def remove_background(input_image_path, output_image_path, is_cli=False):
         print(f"Background removed and saved to '{output_image_path}'")
     except Exception as e:
         print(f"Error: {e}")
-    finally:
-        # Remove the input temporary file if not in CLI mode or in development mode
-        if (not is_cli):
-            os.remove(input_image_path)
+    # finally:
+    #     # Remove the input temporary file if not in CLI mode or in development mode
+    #     if (not is_cli):
+    #         os.remove(input_image_path)
 
 @app.route('/remove_background', methods=['POST'])
 def remove_background_endpoint():
@@ -76,8 +94,11 @@ def run_cli(input_image_path, output_image_path):
     print("Background removal is complete.")
 
 def run_server(port, debug):
-    app.run(host='0.0.0.0', port=port, debug=debug)
-
+    app.run(host='127.0.0.1', port=port, debug=debug)
+    
+# Start the cleanup thread
+cleanup_thread = Thread(target=cleanup_old_files, daemon=True)
+cleanup_thread.start()
 if __name__ == "__main__":
     # Check if the first argument is "serve"; if so, run as a web server
     if len(sys.argv) > 1 and sys.argv[1] == "serve":
