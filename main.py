@@ -71,15 +71,26 @@ def get_result(unique_id):
     else:
         return jsonify({'error': 'Background removal not completed yet'}), 202
 
-def main():
-    parser = argparse.ArgumentParser(description="Remove background from an image.")
-    parser.add_argument("input_image_path", type=str, help="Path to the input image")
-    parser.add_argument("output_image_path", type=str, help="Path to the output image")
-    args = parser.parse_args()
-    remove_background(args.input_image_path, args.output_image_path, is_cli=True)
+def run_cli(input_image_path, output_image_path):
+    remove_background(input_image_path, output_image_path, is_cli=True)
+    print("Background removal is complete.")
+
+def run_server(port, debug):
+    app.run(host='0.0.0.0', port=port, debug=debug)
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        main()
+    # Check if the first argument is "serve"; if so, run as a web server
+    if len(sys.argv) > 1 and sys.argv[1] == "serve":
+        parser = argparse.ArgumentParser(description="Run the Flask web server.")
+        parser.add_argument("--port", type=int, default=5000, help="The port number the server should listen on.")
+        parser.add_argument("--debug", action='store_true', help="Run the server in debug mode if specified, else run in production.")
+        args, unknown = parser.parse_known_args()  # Ignore unknown args
+        debug_mode = MODE == 'development' or args.debug
+        run_server(args.port, debug_mode)
     else:
-        app.run(debug=True)
+        # If not serving, assume CLI mode for background removal
+        parser = argparse.ArgumentParser(description="Remove background from an image.")
+        parser.add_argument("input_image_path", type=str, help="Path to the input image")
+        parser.add_argument("output_image_path", type=str, help="Path to the output image")
+        args = parser.parse_args()
+        run_cli(args.input_image_path, args.output_image_path)
