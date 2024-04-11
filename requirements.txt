@@ -1,4 +1,7 @@
-Flask==3.0.2
+cloudinary==1.39.1
+Flask==3.0.3
 numpy==1.26.4
 opencv_python_headless==4.9.0.80
+Pillow==10.3.0
 rembg==2.0.56
+Requests==2.31.0
