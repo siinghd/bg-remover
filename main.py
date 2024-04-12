@@ -16,18 +16,27 @@ import glob
 import requests
 from PIL import Image
 import tempfile
-import cloudinary
-import cloudinary.uploader
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from sklearn.cluster import KMeans
+import boto3
 
 app = Flask(__name__)
 
-# Configure Cloudinary with your credentials
+# Configure R2 with your credentials
 
-cloudinary.config( 
-  cloud_name = "", 
-  api_key = "", 
-  api_secret = "" 
+# Configuration details
+endpoint_url = ''
+access_key_id = ''
+secret_access_key = ''
+region_name = ''  # Choose as per your location setup in R2
+bucket_name = ''
+# Create an S3 client
+s3 = boto3.client(
+    service_name='s3',
+    endpoint_url=endpoint_url,
+    aws_access_key_id=access_key_id,
+    aws_secret_access_key=secret_access_key,
+    region_name=region_name
 )
 # Get the environment variable for the mode (production or development)
 MODE = os.environ.get('MODE', 'development')
@@ -103,17 +112,28 @@ def download_image(url):
 
 from collections import Counter
 
-def extract_background_color(image):
-    # Ensure image is in RGB
-    image_rgb = image.convert("RGB")
-    
-    # Convert the image to a sequence of pixels
-    pixels = list(image_rgb.getdata())
-    
-    # Find the most common color
-    most_common_color = Counter(pixels).most_common(1)[0][0]
-    
-    return most_common_color
+def extract_background_color(image, crop_size=(10, 10)):
+    try:
+        # Ensure the image is in RGB format
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+
+        # Crop the image to the top-left corner based on crop_size
+        crop = image.crop((0, 0, crop_size[0], crop_size[1]))  # (left, upper, right, lower)
+
+        # Convert the cropped image to a numpy array
+        np_crop = np.array(crop)
+
+        # Calculate the mean color of the cropped area
+        mean_color = np.mean(np_crop, axis=(0, 1)).astype(int)
+        
+        # Convert numpy array to tuple of RGB values
+        background_color = tuple(mean_color)
+
+        return background_color
+    except Exception as e:
+        print(f"Failed to extract background color from crop due to error: {str(e)}")
+        return None
 
 def remove_background_and_upload(image_url, mint_address, rank):
     input_tmp_path = None
@@ -122,6 +142,7 @@ def remove_background_and_upload(image_url, mint_address, rank):
         image = download_image(image_url)
         background_color = extract_background_color(image)
         background_color_hex = ''.join([f'{c:02x}' for c in background_color])
+        print(f"Background color: {background_color_hex}")
 
         # Extract the filename (numeric part) from the URL
         original_image_name_match = re.search(r'/(\d+)\.png$', image_url)
@@ -137,15 +158,15 @@ def remove_background_and_upload(image_url, mint_address, rank):
         remove_background(input_tmp_path, output_tmp_path)
 
         # Ensure public_id does not end with double .png
-        public_id = f"teddies/{mint_address}-teddies-{background_color_hex}-{rank}-{original_image_name_numeric}"
+        public_id = f"teddies/{mint_address}-teddies-{background_color_hex}-{rank}-{original_image_name_numeric}.png"
 
         with open(output_tmp_path, 'rb') as f:
-            upload_result = cloudinary.uploader.upload(
-                f, 
-                public_id=public_id,
-                resource_type='image'
+            s3.upload_fileobj(
+                io.BytesIO(f.read()),
+                bucket_name,
+                public_id
             )
-        print("Uploaded to Cloudinary:", upload_result['url'])
+        print(f"Uploaded to Cloudflare R2: {public_id}")
         
     except Exception as e:
         print(f"Failed to process {image_url}: {e}")
