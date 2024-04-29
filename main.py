@@ -19,62 +19,46 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from sklearn.cluster import KMeans
 import boto3
+from transformers import pipeline
 
 app = Flask(__name__)
 
-# Configure R2 with your credentials
+# # Configure R2 with your credentials
+# endpoint_url = ''
+# access_key_id = ''
+# secret_access_key = ''
+# region_name = 'auto'  # Choose as per your location setup in R2
+# bucket_name = ''
 
-# Configuration details
-endpoint_url = ''
-access_key_id = ''
-secret_access_key = ''
-region_name = ''  # Choose as per your location setup in R2
-bucket_name = ''
-# Create an S3 client
-s3 = boto3.client(
-    service_name='s3',
-    endpoint_url=endpoint_url,
-    aws_access_key_id=access_key_id,
-    aws_secret_access_key=secret_access_key,
-    region_name=region_name
-)
+# # Create an S3 client
+# s3 = boto3.client(
+#     service_name='s3',
+#     endpoint_url=endpoint_url,
+#     aws_access_key_id=access_key_id,
+#     aws_secret_access_key=secret_access_key,
+#     region_name=region_name
+# )
+
 # Get the environment variable for the mode (production or development)
 MODE = os.environ.get('MODE', 'development')
-def remove_background_and_upload_wrapper(args):
-    """
-    Wrapper function to unpack arguments.
-    This is necessary because ThreadPoolExecutor.map or submit
-    functions can only pass a single iterable to the worker function.
-    """
-    return remove_background_and_upload(*args)
 
-def process_and_upload_mints_concurrently():
+def process_and_upload_mints():
     mint_data = fetch_mint_data()  # Assuming this function fetches your mints data
     if mint_data is None:
         print("No data fetched, terminating process.")
         return
 
     mints = mint_data.get("mints", [])
-    # Prepare a list of tuples, each containing the arguments to be passed to the function
-    tasks = [(mint.get("image"), mint.get("mint"), mint.get("rank")) for mint in mints if mint.get("image") and mint.get("mint") and  mint.get("rank")]
-
-    # Number of workers (threads); adjust based on your environment and task nature
-    workers = 2
-
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        # Schedule the callable to be executed for each set of arguments and return futures
-        future_to_mint = {executor.submit(remove_background_and_upload_wrapper, task): task for task in tasks}
+    
+    for mint in mints:
+        image_url = mint.get("image")
+        mint_address = mint.get("mint")
+        rank = mint.get("rank")
+        if image_url and mint_address and rank:
+            remove_background_and_upload(image_url, mint_address, rank)
+        else:
+            print(f"Missing image URL, mint address, or rank for mint: {mint}")
         
-        for future in as_completed(future_to_mint):
-            task = future_to_mint[future]
-            try:
-                # Wait for the result (if necessary) and handle results/errors here
-                result = future.result()
-            except Exception as exc:
-                print(f'{task[1]} generated an exception: {exc}')
-            else:
-                print(f'{task[1]} image processed successfully.')
-                
 def fetch_mint_data():
     url = "https://moonrank.app/mints/teddies"
     try:
@@ -86,31 +70,12 @@ def fetch_mint_data():
         print(f"Failed to fetch mint data: {e}")
         return None
 
-def process_and_upload_mints():
-    mint_data = fetch_mint_data()
-    if mint_data is None:
-        print("No data fetched, terminating process.")
-        return
-    
-    mints = mint_data.get("mints", [])
-    
-    for mint in mints:
-        image_url = mint.get("image")
-        mint_address = mint.get("mint")
-        if image_url and mint_address:
-            # Assuming `remove_background_and_upload` is the function you've set up to process each mint
-            remove_background_and_upload(image_url, mint_address)
-        else:
-            print(f"Missing image URL or mint address for mint: {mint}")
-            
 def download_image(url):
     response = requests.get(url)
     if response.status_code == 200:
         return Image.open(io.BytesIO(response.content))
     else:
         raise Exception("Failed to download image")
-
-from collections import Counter
 
 def extract_background_color(image, crop_size=(10, 10)):
     try:
@@ -176,7 +141,6 @@ def remove_background_and_upload(image_url, mint_address, rank):
             os.remove(input_tmp_path)
         if output_tmp_path and os.path.exists(output_tmp_path):
             os.remove(output_tmp_path)
-
         
 # Function to clean up old files
 def cleanup_old_files():
@@ -194,22 +158,25 @@ def cleanup_old_files():
 
 def remove_background(input_image_path, output_image_path, is_cli=False):
     try:
-        # Read the image data
-        input_image = cv2.imread(input_image_path, cv2.IMREAD_UNCHANGED)
-        # Convert the image data to bytes
-        input_image_bytes = cv2.imencode('.png', input_image)[1].tobytes()
-        # Remove the background
-        output_image_bytes = remove(input_image_bytes)
-        # Convert the output bytes back to an image
-        output_image = cv2.imdecode(np.frombuffer(output_image_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
-        # Save the output image
-        cv2.imwrite(output_image_path, output_image)
+        # Initialize the pipeline
+        pipe = pipeline("image-segmentation", model="briaai/RMBG-1.4", trust_remote_code=True)
+        
+        # Use the pipeline to remove the background
+        # This will return a PIL Image with the background removed
+        pillow_image = pipe(input_image_path)
+        
+        # Ensure the output file extension is .png
+        output_image_path = os.path.splitext(output_image_path)[0] + ".png"
+        
+        # Save the output image as PNG using PIL
+        pillow_image.save(output_image_path, "PNG")
+        
         print(f"Background removed and saved to '{output_image_path}'")
     except Exception as e:
         print(f"Error: {e}")
     finally:
         # Remove the input temporary file if not in CLI mode or in development mode
-        if (not is_cli):
+        if not is_cli:
             os.remove(input_image_path)
 
 @app.route('/remove_background', methods=['POST'])
@@ -245,8 +212,6 @@ def get_result(unique_id):
             output_image_bytes = f.read()
         # Send the output image as a response
         output_image_file = io.BytesIO(output_image_bytes)
-    
-        # os.remove(output_image_path)
         return send_file(output_image_file, mimetype='image/png')
     else:
         return jsonify({'error': 'Background removal not completed yet'}), 202
@@ -258,24 +223,26 @@ def run_cli(input_image_path, output_image_path):
 def run_server(port, debug):
     app.run(host='127.0.0.1', port=port, debug=debug)
     
-# Start the cleanup thread
-cleanup_thread = Thread(target=cleanup_old_files, daemon=True)
-cleanup_thread.start()
 if __name__ == "__main__":
-    # process_and_upload_mints_concurrently()
-
-    # Check if the first argument is "serve"; if so, run as a web server
-    if len(sys.argv) > 1 and sys.argv[1] == "serve":
-        parser = argparse.ArgumentParser(description="Run the Flask web server.")
-        parser.add_argument("--port", type=int, default=5000, help="The port number the server should listen on.")
-        parser.add_argument("--debug", action='store_true', help="Run the server in debug mode if specified, else run in production.")
-        args, unknown = parser.parse_known_args()  # Ignore unknown args
-        debug_mode = MODE == 'development' or args.debug
-        run_server(args.port, debug_mode)
-    else:
-        # If not serving, assume CLI mode for background removal
-        parser = argparse.ArgumentParser(description="Remove background from an image.")
-        parser.add_argument("input_image_path", type=str, help="Path to the input image")
-        parser.add_argument("output_image_path", type=str, help="Path to the output image")
-        args = parser.parse_args()
-        run_cli(args.input_image_path, args.output_image_path)
+    try:
+        # process_and_upload_mints()
+        # Check if the first argument is "serve"; if so, run as a web server
+        if len(sys.argv) > 1 and sys.argv[1] == "serve":
+            parser = argparse.ArgumentParser(description="Run the Flask web server.")
+            parser.add_argument("--port", type=int, default=5000, help="The port number the server should listen on.")
+            parser.add_argument("--debug", action='store_true', help="Run the server in debug mode if specified, else run in production.")
+            args, unknown = parser.parse_known_args()  # Ignore unknown args
+            debug_mode = MODE == 'development' or args.debug
+            run_server(args.port, debug_mode)
+        else:
+            # If not serving, assume CLI mode for background removal
+            parser = argparse.ArgumentParser(description="Remove background from an image.")
+            parser.add_argument("input_image_path", type=str, help="Path to the input image")
+            parser.add_argument("output_image_path", type=str, help="Path to the output image")
+            args = parser.parse_args()
+            run_cli(args.input_image_path, args.output_image_path)
+    except Exception as e:
+        print(f"An error occurred during execution: {e}")
+        # Log the exception traceback for debugging purposes
+        import traceback
+        traceback.print_exc()

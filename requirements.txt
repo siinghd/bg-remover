@@ -6,3 +6,4 @@ Pillow==10.3.0
 rembg==2.0.56
 Requests==2.31.0
 scikit_learn==1.4.2
+transformers==4.40.1
