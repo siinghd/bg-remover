@@ -1,0 +1,20 @@
+# Ignore virtual environments
+venv/
+
+# Ignore all bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore git and version control
+.git
+.gitignore
+
+# Ignore environment settings
+.env
+
+# Ignore other unnecessary files
+.DS_Store
+*.log
+node_modules/
