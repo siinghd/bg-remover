@@ -151,22 +151,32 @@ def remove_background_endpoint():
 
     return jsonify({'id': unique_id})
 
-@app.route('/get_result/<string:unique_id>', methods=['GET'])
-def get_result(unique_id):
-    status = redis_client.get(f"{unique_id}_status")
-    image_url = redis_client.get(f"{unique_id}_url")
-    if status is None:
-        return jsonify({'error': 'Invalid ID'}), 404
-    elif status.decode() == "completed":
-        return jsonify({
-            'id': unique_id,
-            'status': 'completed',
-            'image_url': image_url.decode()
-        })
-    elif status.decode() == "failed":
-        return jsonify({'error': 'Background removal failed'}), 500
-    else:
-        return jsonify({'status': 'processing'}), 202
+@app.route('/get_result', methods=['GET'])
+def get_result():
+    unique_ids = request.args.getlist('id')
+    if not unique_ids:
+        return jsonify({'error': 'No IDs provided'}), 400
+
+    results = []
+    for unique_id in unique_ids:
+        status = redis_client.get(f"{unique_id}_status")
+        image_url = redis_client.get(f"{unique_id}_url")
+        if status is None:
+            result = {'id': unique_id, 'error': 'Invalid ID'}
+        elif status.decode() == "completed":
+            result = {
+                'id': unique_id,
+                'status': 'completed',
+                'image_url': image_url.decode()
+            }
+        elif status.decode() == "failed":
+            result = {'id': unique_id, 'error': 'Background removal failed'}
+        else:
+            result = {'id': unique_id, 'status': 'processing'}
+
+        results.append(result)
+
+    return jsonify(results)
     
 
 
