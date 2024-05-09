@@ -130,24 +130,29 @@ def remove_background_task(image_url, unique_id, webhook_url=None, input_image_d
 @app.route('/remove_background', methods=['POST'])
 def remove_background_endpoint():
     unique_id = str(uuid.uuid4())
+    image_data = request.files.get('image')
+    image_url = request.form.get('image_url')
+    is_paid = request.form.get('is_paid_user', 'false').lower() == 'true'
     webhook_url = request.form.get('webhook_url')
-    is_paid_user = request.form.get('is_paid_user', 'false').lower() == 'true'
 
-    if 'image' in request.files:
-        image_file = request.files['image']
-        input_image_data = image_file.read()
-        if is_paid_user:
-            remove_background_task_paid.delay(None, unique_id, webhook_url, input_image_data)
-        else:
-            remove_background_task_free.delay(None, unique_id, webhook_url, input_image_data)
-    elif 'image_url' in request.form:
-        image_url = request.form['image_url']
-        if is_paid_user:
-            remove_background_task_paid.delay(image_url, unique_id, webhook_url)
-        else:
-            remove_background_task_free.delay(image_url, unique_id, webhook_url)
+    input_image_data = None
+    if image_data:
+        input_image_data = image_data.read()
+    elif image_url:
+        try:
+            response = requests.get(image_url, timeout=10)  # Adding a timeout for the request
+            response.raise_for_status()  # Raises HTTPError for bad HTTP responses
+            input_image_data = response.content
+        except requests.RequestException as e:
+            return jsonify({'error': f'Failed to download image from URL: {str(e)}'}), 400
+
+    if input_image_data is None:
+        return jsonify({'error': 'No valid image data provided'}), 400
+
+    if is_paid:
+        remove_background_task_paid.delay(image_url, unique_id, webhook_url, input_image_data)
     else:
-        return jsonify({'error': 'No image file or URL provided'}), 400
+        remove_background_task_free.delay(image_url, unique_id, webhook_url, input_image_data)
 
     return jsonify({'id': unique_id})
 
@@ -157,27 +162,37 @@ def get_result():
     if not unique_ids:
         return jsonify({'error': 'No IDs provided'}), 400
 
-    results = []
-    for unique_id in unique_ids:
-        status = redis_client.get(f"{unique_id}_status")
-        image_url = redis_client.get(f"{unique_id}_url")
-        if status is None:
-            result = {'id': unique_id, 'error': 'Invalid ID'}
-        elif status.decode() == "completed":
-            result = {
-                'id': unique_id,
-                'status': 'completed',
-                'image_url': image_url.decode()
-            }
-        elif status.decode() == "failed":
-            result = {'id': unique_id, 'error': 'Background removal failed'}
-        else:
-            result = {'id': unique_id, 'status': 'processing'}
-
-        results.append(result)
-
+    results = [
+        retrieve_status(unique_id) for unique_id in unique_ids
+    ]
     return jsonify(results)
-    
+
+def retrieve_status(unique_id):
+    """
+    Retrieve the status of a background removal operation for a given unique ID.
+    If the status doesn't exist in Redis, indicate that the task has not been started.
+
+    Args:
+    unique_id (str): The unique identifier for the task.
+
+    Returns:
+    dict: A dictionary containing the ID, status, and possibly the image URL if the task is completed.
+    """
+    if not redis_client.exists(f"{unique_id}_status"):
+        # If there's no status, the task was never started or the status has expired
+        return {'id': unique_id, 'status': 'invalid'}
+
+    status = redis_client.get(f"{unique_id}_status").decode()
+    if status == "completed":
+        image_url = redis_client.get(f"{unique_id}_url").decode()
+        return {'id': unique_id, 'status': 'completed', 'image_url': image_url}
+    elif status == "failed":
+        return {'id': unique_id, 'error': 'Background removal failed'}
+
+    # If the status key exists and is neither completed nor failed, assume it is still processing
+    return {'id': unique_id, 'status': 'processing'}
+
+
 
 
 def start_celery_worker():
